@@ -68,9 +68,10 @@ def get_robot_link(
     wid: str,
     client: Client,
     mate: Optional[Union[MateFeatureData, None]] = None,
+    up_axis: str = 'z',
 ) -> tuple[Link, np.matrix, Asset]:
     """
-    Generate a URDF link from an Onshape part.
+    Generate a URDF link from an Onshape part with specified up axis.
 
     Args:
         name: The name of the link.
@@ -78,30 +79,28 @@ def get_robot_link(
         wid: The unique identifier of the workspace.
         client: The Onshape client object to use for sending API requests.
         mate: MateFeatureData object to use for generating the transformation matrix.
+        up_axis: 'z' for Z-up or 'y' for Y-up coordinate system.
 
     Returns:
-        tuple[Link, np.matrix]: The generated link object
-            and the transformation matrix from the STL origin to the link origin.
-
-    Examples:
-        >>> get_robot_link("root", part, wid, client)
-        (
-            Link(name='root', visual=VisualLink(...), collision=CollisionLink(...), inertial=InertialLink(...)),
-            np.matrix([[1., 0., 0., 0.],
-                [0., 1., 0., 0.],
-                [0., 0., 1., 0.],
-                [0., 0., 0., 1.]])
-        )
-
+        tuple[Link, np.matrix, Asset]: The generated link object,
+            the transformation matrix from the STL origin to the link origin,
+            and the asset.
     """
+    # rotation_matrix = np.eye(4)
     _link_to_stl_tf = np.eye(4)
 
     if mate is None:
+        # for root link, get the COM and use that as the origin for stl
+        # rotation_matrix = get_up_axis_rotation(up_axis)
         _link_to_stl_tf[:3, 3] = np.array(part.MassProperty.center_of_mass).reshape(3)
     elif mate.matedEntities[CHILD].parentCS:
+        # for non-root links, get the parentCS and transform it to the mateCS
         _link_to_stl_tf = mate.matedEntities[CHILD].parentCS.part_tf @ mate.matedEntities[CHILD].matedCS.part_to_mate_tf
     else:
         _link_to_stl_tf = mate.matedEntities[CHILD].matedCS.part_to_mate_tf
+
+    # Apply rotation based on up_axis
+    _link_to_stl_tf = _link_to_stl_tf
 
     _stl_to_link_tf = np.matrix(np.linalg.inv(_link_to_stl_tf))
     _mass = part.MassProperty.mass[0]
@@ -110,7 +109,7 @@ def get_robot_link(
     _inertia = part.MassProperty.inertia_wrt(np.matrix(_stl_to_link_tf[:3, :3]))
     _principal_axes_rotation = (0.0, 0.0, 0.0)
 
-    LOGGER.info(f"Creating robot link for {name}")
+    LOGGER.info(f"Creating robot link for {name} with up_axis={up_axis}")
 
     if part.documentVersion:
         wtype = WorkspaceType.V.value
@@ -177,9 +176,10 @@ def get_robot_joint(
     stl_to_parent_tf: np.matrix,
     mimic: Optional[JointMimic] = None,
     is_rigid_assembly: bool = False,
+    up_axis: str = 'z',
 ) -> tuple[list[BaseJoint], Optional[list[Link]]]:
     """
-    Generate a URDF joint from an Onshape mate feature.
+    Generate a URDF joint from an Onshape mate feature with specified up axis.
 
     Args:
         parent: The name of the parent link.
@@ -188,28 +188,15 @@ def get_robot_joint(
         stl_to_parent_tf: The transformation matrix from the STL origin to the parent link origin.
         mimic: The mimic joint object.
         is_rigid_assembly: Whether the assembly is a rigid assembly.
+        up_axis: 'z' for Z-up or 'y' for Y-up coordinate system.
 
     Returns:
         tuple[list[BaseJoint], Optional[list[Link]]]: The generated joint object and the links.
-
-    Examples:
-        >>> get_robot_joint("root", "link1", mate, np.eye(4))
-        (
-            [
-                RevoluteJoint(
-                    name='base_link_to_link1',
-                    parent='root',
-                    child='link1',
-                    origin=Origin(...),
-                    limits=JointLimits(...),
-                    axis=Axis(...),
-                    dynamics=JointDynamics(...)
-                )
-            ],
-            None
-        )
-
     """
+    # rotation_matrix = get_up_axis_rotation(up_axis)
+    # rotation_matrix = get_rotation_matrix(np.pi / 2, "x")
+    # rotation_matrix = np.eye(4)
+
     links = []
     if isinstance(mate, MateFeatureData):
         if not is_rigid_assembly:
@@ -221,12 +208,42 @@ def get_robot_joint(
             )
 
     stl_to_mate_tf = stl_to_parent_tf @ parent_to_mate_tf
+    # Apply rotation based on up_axis
     origin = Origin.from_matrix(stl_to_mate_tf)
+    # origin.rpy = (0.0, 0.0, 0.0)
+
     sanitized_name = get_sanitized_name(mate.name)
 
-    LOGGER.info(f"Creating robot joint from {parent} to {child}")
+    LOGGER.info(f"Creating robot joint from {parent} to {child} with up_axis={up_axis}")
+
+    # Define axis transformations based on up_axis
+    def transform_axis(axis_vector: tuple[float, float, float], up_axis: str, joint_type: MateType) -> tuple[float, float, float]:
+        """
+        Transforms the axis vector based on the up_axis and joint type.
+
+        Args:
+            axis_vector: The original axis vector.
+            up_axis: 'z' for Z-up or 'y' for Y-up coordinate system.
+            joint_type: The type of joint (REVOLUTE, SLIDER, etc.)
+
+        Returns:
+            Transformed axis vector.
+        """
+        if up_axis.lower() == 'y':
+            if joint_type in [MateType.REVOLUTE, MateType.SLIDER, MateType.CYLINDRICAL]:
+                # For Y-up, all rotational and translational joints should have Y as their axis
+                return (0.0, 1.0, 0.0)
+            elif joint_type == MateType.BALL:
+                # For ball joints, maintain orthogonal axes but rotated to Y-up
+                x, y, z = axis_vector
+                y_new = z
+                z_new = -y
+                return (x, y_new, z_new)
+
+        return axis_vector
 
     if mate.mateType == MateType.REVOLUTE:
+        transformed_axis = transform_axis((0.0, 0.0, -1.0), up_axis, mate.mateType)
         return [
             RevoluteJoint(
                 name=sanitized_name,
@@ -239,7 +256,7 @@ def get_robot_joint(
                     lower=-2 * np.pi,
                     upper=2 * np.pi,
                 ),
-                axis=Axis((0.0, 0.0, -1.0)),
+                axis=Axis(transformed_axis),
                 # dynamics=JointDynamics(damping=0.1, friction=0.1),
                 mimic=mimic,
             )
@@ -249,6 +266,7 @@ def get_robot_joint(
         return [FixedJoint(name=sanitized_name, parent=parent, child=child, origin=origin)], links
 
     elif mate.mateType == MateType.SLIDER or mate.mateType == MateType.CYLINDRICAL:
+        transformed_axis = transform_axis((0.0, 0.0, -1.0), up_axis, mate.mateType)
         return [
             PrismaticJoint(
                 name=sanitized_name,
@@ -261,7 +279,7 @@ def get_robot_joint(
                 #     lower=-0.1,
                 #     upper=0.1,
                 # ),
-                axis=Axis((0.0, 0.0, -1.0)),
+                axis=Axis(transformed_axis),
                 # dynamics=JointDynamics(damping=0.1, friction=0.1),
                 mimic=mimic,
             )
@@ -287,6 +305,11 @@ def get_robot_joint(
 
         links = [dummy_x, dummy_y]
 
+        # Define transformed axes for ball joints
+        transformed_axis_x = transform_axis((1.0, 0.0, 0.0), up_axis, mate.mateType)
+        transformed_axis_y = transform_axis((0.0, 1.0, 0.0), up_axis, mate.mateType)
+        transformed_axis_z = transform_axis((0.0, 0.0, -1.0), up_axis, mate.mateType)
+
         return [
             RevoluteJoint(
                 name=sanitized_name + "_x",
@@ -299,7 +322,7 @@ def get_robot_joint(
                     lower=-2 * np.pi,
                     upper=2 * np.pi,
                 ),
-                axis=Axis((1.0, 0.0, 0.0)),
+                axis=Axis(transformed_axis_x),
                 # dynamics=JointDynamics(damping=0.1, friction=0.1),
                 mimic=mimic,
             ),
@@ -314,7 +337,7 @@ def get_robot_joint(
                     lower=-2 * np.pi,
                     upper=2 * np.pi,
                 ),
-                axis=Axis((0.0, 1.0, 0.0)),
+                axis=Axis(transformed_axis_y),
                 # dynamics=JointDynamics(damping=0.1, friction=0.1),
                 mimic=mimic,
             ),
@@ -329,7 +352,7 @@ def get_robot_joint(
                     lower=-2 * np.pi,
                     upper=2 * np.pi,
                 ),
-                axis=Axis((0.0, 0.0, -1.0)),
+                axis=Axis(transformed_axis_z),
                 # dynamics=JointDynamics(damping=0.1, friction=0.1),
                 mimic=mimic,
             ),
@@ -398,3 +421,47 @@ def get_topological_mates(
             topological_mates[key] = mates[key]
 
     return topological_mates, topological_relations
+
+def get_rotation_matrix(angle: float, axis: str) -> np.ndarray:
+    if axis == "x":
+        return np.array([
+                [1, 0, 0, 0],
+                [0, np.cos(angle), -np.sin(angle), 0],
+                [0, np.sin(angle), np.cos(angle), 0],
+                [0, 0, 0, 1],
+            ]
+        )
+
+    elif axis == "y":
+        return np.array(
+            [
+                [np.cos(angle), 0, np.sin(angle), 0],
+                [0, 1, 0, 0],
+                [-np.sin(angle), 0, np.cos(angle), 0],
+                [0, 0, 0, 1],
+            ]
+        )
+
+    elif axis == "z":
+        return np.array(
+            [
+                [np.cos(angle), -np.sin(angle), 0, 0],
+                [np.sin(angle), np.cos(angle), 0, 0],
+                [0, 0, 1, 0],
+                [0, 0, 0, 1],
+            ]
+        )
+
+
+def get_up_axis_rotation(up_axis: str) -> np.matrix:
+    """
+    Returns the rotation matrix based on the up_axis parameter.
+
+    Args:
+        up_axis: 'z' for Z-up, 'y' for Y-up.
+
+    Returns:
+        A 4x4 rotation matrix.
+    """
+    rotation = get_rotation_matrix(-np.pi / 2, "x") if up_axis.lower() == "y" else np.eye(4)
+    return np.matrix(rotation)

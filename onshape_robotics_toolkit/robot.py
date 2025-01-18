@@ -937,6 +937,7 @@ def get_robot(
     relations: dict[str, MateRelationFeatureData],
     client: Client,
     robot_name: str,
+    up_axis: str = "z",
 ) -> Robot:
     """
     Generate a Robot instance from an Onshape assembly.
@@ -963,7 +964,12 @@ def get_robot(
     LOGGER.info(f"Processing root node: {root_node}")
 
     root_link, stl_to_root_tf, root_asset = get_robot_link(
-        name=root_node, part=parts[root_node], wid=assembly.document.wid, client=client, mate=None
+        name=root_node,
+        part=parts[root_node],
+        wid=assembly.document.wid,
+        client=client,
+        mate=None,
+        up_axis=up_axis,
     )
     robot.add_link(root_link)
     assets_map[root_node] = root_asset
@@ -1001,10 +1007,16 @@ def get_robot(
             parent_tf,
             joint_mimic,
             is_rigid_assembly=parts[parent].isRigidAssembly,
+            up_axis=up_axis,
         )
 
         link, stl_to_link_tf, asset = get_robot_link(
-            child, parts[child], assembly.document.wid, client, topological_mates[mate_key]
+            child,
+            parts[child],
+            assembly.document.wid,
+            client,
+            topological_mates[mate_key],
+            up_axis=up_axis,
         )
         stl_to_link_tf_map[child] = stl_to_link_tf
         assets_map[child] = asset

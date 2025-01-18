@@ -22,13 +22,13 @@ if __name__ == "__main__":
     )
 
     elements = client.get_elements(doc.did, doc.wtype, doc.wid)
-    variables = client.get_variables(doc.did, doc.wid, elements["variables"].id)
+    # variables = client.get_variables(doc.did, doc.wid, elements["variables"].id)
 
-    variables["wheelDiameter"].expression = "180 mm"
-    variables["wheelThickness"].expression = "71 mm"
-    variables["forkAngle"].expression = "20 deg"
+    # variables["wheelDiameter"].expression = "180 mm"
+    # variables["wheelThickness"].expression = "71 mm"
+    # variables["forkAngle"].expression = "20 deg"
 
-    client.set_variables(doc.did, doc.wid, elements["variables"].id, variables)
+    # client.set_variables(doc.did, doc.wid, elements["variables"].id, variables)
     assembly = client.get_assembly(doc.did, doc.wtype, doc.wid, elements["assembly"].id)
 
     instances, occurrences, id_to_name_map = get_instances(assembly, max_depth=1)
@@ -39,7 +39,6 @@ if __name__ == "__main__":
     mates, relations = get_mates_and_relations(assembly, subassemblies, rigid_subassemblies, id_to_name_map, parts)
 
     graph, root_node = create_graph(occurrences=occurrences, instances=instances, parts=parts, mates=mates)
-    robot = get_robot(assembly, graph, root_node, parts, mates, relations, client, "test")
+    robot = get_robot(assembly, graph, root_node, parts, mates, relations, client, "test", up_axis="z")
     robot.show_tree()
-    robot.show_graph("bike.png")
     robot.save()

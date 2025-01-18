@@ -104,33 +104,33 @@ class Origin:
     xyz: tuple[float, float, float]
     rpy: tuple[float, float, float]
 
-    def transform(self, matrix: np.matrix, inplace: bool = False) -> Union["Origin", None]:
+    def transform(self, matrix: np.ndarray, inplace: bool = False) -> Optional["Origin"]:
         """
-        Apply a transformation matrix to the origin.
+        Apply a 4×4 transformation matrix to this Origin.
 
         Args:
-            matrix: The transformation matrix to apply to the origin.
-            inplace: Whether to apply the transformation in place.
+            matrix: A 4×4 transformation matrix (NumPy array).
+            inplace: If True, update 'self' in place and return None.
 
         Returns:
-            The origin with the transformation applied.
-
-        Examples:
-            >>> origin = Origin(xyz=(1.0, 2.0, 3.0), rpy=(0.0, 0.0, 0.0))
-            >>> matrix = np.eye(4)
-            >>> origin.transform(matrix)
+            A new Origin with the transformation applied, or None if inplace=True.
         """
-        new_xyz = np.dot(matrix[:3, :3], np.array(self.xyz)) + matrix[:3, 3]
-        current_rotation_matrix = Rotation.from_euler("xyz", self.rpy).as_matrix()
+        T_self = self.to_matrix()
 
-        new_rotation_matrix = np.dot(matrix[:3, :3], current_rotation_matrix)
-        new_rpy = Rotation.from_matrix(new_rotation_matrix).as_euler("xyz")
+        # Compose transforms: new_T = matrix * T_self
+        T_new = matrix @ T_self
+
+        # Extract position from last column
+        new_xyz = tuple(T_new[:3, 3])
+        # Extract RPY from the upper-left 3×3 rotation
+        new_rpy = tuple(Rotation.from_matrix(T_new[:3, :3]).as_euler("XYZ"))
+
         if inplace:
-            self.xyz = tuple(new_xyz)
-            self.rpy = tuple(new_rpy)
+            self.xyz = new_xyz
+            self.rpy = new_rpy
             return None
-
-        return Origin(new_xyz, new_rpy)
+        else:
+            return Origin(new_xyz, new_rpy)
 
     def to_xml(self, root: Optional[ET.Element] = None) -> ET.Element:
         """
@@ -203,6 +203,19 @@ class Origin:
             The quaternion representing the origin.
         """
         return Rotation.from_euler(sequence, self.rpy).as_quat()
+
+    def to_matrix(self) -> np.matrix:
+        """
+        Convert the origin to a transformation matrix (4x4)
+
+        Returns:
+            The transformation matrix representing the origin.
+        """
+        T = np.eye(4)
+        R = Rotation.from_euler('xyz', self.rpy).as_matrix()
+        T[:3, :3] = R
+        T[:3, 3] = self.xyz
+        return T
 
     @classmethod
     def from_matrix(cls, matrix: np.matrix) -> "Origin":
@@ -1132,5 +1145,5 @@ class Link:
 
 
 if __name__ == "__main__":
-    origin = Origin(xyz=(0.0, 0.0, 0.0), rpy=(0.0, 0.0, 0.0))
-    print(origin.quat())
+    origin = Origin(xyz=(0.19926431, -0.057635015, 0.040500765), rpy=(3.1415927, 0, 0))
+    print(origin.xyz, origin.rpy)
